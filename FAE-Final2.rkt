@@ -14,7 +14,8 @@
 
 (deftype Expr
   [num n]                                 ; <num>
-  [bool b]                                ; <bool>                               ; (- <FAE> <FAE>)
+  [bool b]                                ; <bool>
+  [zero n]
   [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
 ; [with id-name named-expr body-expr]     ; (with <id> <FAE> <FAE>) "syntax sugar"
   [id name]                               ; <id> 
@@ -93,6 +94,7 @@
     [(? number?) (num src)]
     [(? boolean?) (bool src)]
     [(? symbol?) (id src)]
+    [(list 'zero?? n) (zero (parse n))]
     [(list 'if-tf c et ef) (if-tf (parse c) (parse et) (parse ef))]
     [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
                                                            (cond [(empty? tail) body]
@@ -137,8 +139,9 @@
     [(num n) (valV n)]
     [(bool b) (valV b)]
     [(id x) (env-lookup x env)]; buscar el valor de x en env
+    [(zero n) (zeroV (interp n env))]
     [(prim prim-name args)(prim-ops prim-name (map (λ (x) (strict (interp x env))) args))]
-    [(if-tf c et ef) (if (interp c env)
+    [(if-tf c et ef) (if (valV-v (interp c env))
                          (interp et env)
                          (interp ef env))]
     ;[(with x e b) (interp b (extend-env x (interp e env) env))] ; Si asociamos una funcion a una variable, la funcion entra al env
@@ -153,16 +156,11 @@
      ]
 ))
 
-; (run '{{fun {a b} {+ a b}} 1 3})
 
-; valV+ : Val -> Val
-(define (valV+ s1 s2)
-  (valV (+ (valV-v s1) (valV-v s2)))
-  )
+;Necesita del force
+(define (zeroV n)
+  (valV (eq? 0 (valV-v n))))
 
-(define (valV- s1 s2)
-  (valV (- (valV-v s1) (valV-v s2)))
-  )
 
 (deftype Type
   (Num)
@@ -385,6 +383,36 @@
             {{addN 10} 20}})
 
 (run '{with {{x 3} {y 2}} {+ x y}})
-#|(run '{with {{x 3} {x 5}} {+ x x}})
-(run '{with {{x 3} {y {+ x 3}}} {+ x y}})|#
+(run '{with {{x 3} {x 5}} {+ x x}})
+(run '{with {{x 3} {y {+ x 3}}} {+ x y}})
 (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})
+(test (run '{with {x 3} {if-tf {+ x 1} {+ x 3} {+ x 9}}}) 6)
+
+(run '{rec {sum {fun {n}
+                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})
+
+(test (run '{rec {sum {fun {n}
+                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})0)
+
+(test (run '{rec {sum {fun {n}
+                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
+
+#|(test (run '{rec {mult {fun {n}
+                      {if-tf {zero?? n}
+                             1
+                             {* n {mult {- n 1}}}
+                             }
+                      }
+                 }
+            {mult 6}
+            })720)
+
+(test (run '{rec {mult {fun {n}
+                      {if-tf {zero?? n}
+                             0
+                             {- n {mult {- n 1}}}
+                             }
+                      }
+                 }
+            {mult 10}
+            })5)|#
