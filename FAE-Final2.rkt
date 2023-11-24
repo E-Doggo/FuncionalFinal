@@ -94,11 +94,11 @@
     [(? boolean?) (bool src)]
     [(? symbol?) (id src)]
     [(list 'if-tf c et ef) (if-tf (parse c) (parse et) (parse ef))]
+    [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
+                                                           (cond [(empty? tail) body]
+                                                                 [(list 'with tail body)]
+                                                                 )))]
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
-        [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
-                                                           (cond [(empty? tail) (parse body)]
-                                                                 [(parse (list 'with tail body))]
-                                                                        )))]
     [(list 'fun arg-names body) (transform-fundef arg-names (parse body))] ; 1. Agregar el caso del fun
     [(list fun args) (match args
                        [(? number?) (app (parse fun) (parse args))]
@@ -126,6 +126,8 @@
   (closureV arg body env) ; closure = fun + env
   (promiseV expr env cache) ; promise = expr-L + env + cache
   )
+
+
 
 ; interp :: Expr  Env -> Val
 ; interpreta una expresion
@@ -161,6 +163,35 @@
   (valV (- (valV-v s1) (valV-v s2)))
   )
 
+(deftype Type
+  (Num)
+  (Bool))
+
+;all-nums:: (List nums) -> bool
+(define (all-nums lst)
+  (match lst
+  ['() #t]
+  [(cons h t)(if (Num? h) (all-nums t) #f)])
+  )
+
+
+;typeof: expr -> type/error
+(define (typeof expr)
+  (match expr
+    [(num n)(Num)]
+    [(bool b)(Bool)]
+    ;(app (fun 'x (prim '* (list (id 'x) (id 'x) (id 'x) (id 'x)))) (bool #t))
+    [(app (fun x (prim '* (cons h t))) body) (if (Bool? (typeof body))
+                                                 (error "error: type error")
+                                                 (typeof (prim '* (cons h t)))
+                                                 )]
+    ;(prim '* (list (num 1) (bool #t) (num 1) (num 1)))
+    [(prim '* (list x ...)) (let ([l (map typeof x)])
+                              (if (all-nums (cdr l)) (Num) (error "error: type error")))]
+    [else expr]
+    )
+  )
+
 ; strict -> Val(valV/closureV/promiseV) -> Val (valV/closureV))
 ; destructor de promesas - cumplidor de promesas
 (define (strict val)
@@ -180,9 +211,27 @@
     )
   )
 
+
+
+
+
+
 ; run: Src -> Src
 ; corre un programa
-(define (run prog)
+(define (run prog) 
+  (let* (
+         [expr (parse prog)]
+         [t (typeof expr)]
+         [res (interp expr empty-env)])
+    (match (strict res)
+      [(valV v) v]
+      [(closureV arg body env) res])
+      ;[(promiseV e env) (interp e env)])
+    )
+  )
+
+#|(define (run prog)
+
   (let ([res (interp (parse prog) empty-env)])
     ; (interp res ...)
     (match (strict res)
@@ -190,7 +239,7 @@
       [(closureV arg body env) res])
       ;[(promiseV e env) (interp e env)])
     )
-  )
+  )|#
 
 (test (run '{+ 3 4}) 7)
 (test (run '{- 5 1}) 4)
@@ -295,6 +344,7 @@
 (test (run '{with {x 3} {with {y {+ 2 x}} {+ x y}}}) 8)
 (test (run '{* 1 1 1 1}) 1)
 (test/exn (run '{* 1 #t 1 1}) "type error")
+(test/exn (run '{with {x 1} {* #t x x x}}) "type error")
 (test/exn (run '{with {x #t} {* 1 x x x}}) "type error")
 (test/exn (run '{with {x #t} {* x x x x}}) "type error")
 (test (run '{with {x 3} {+ x x}}) 6)
