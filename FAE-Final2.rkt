@@ -21,7 +21,10 @@
   [id name]                               ; <id> 
   [app fname arg-expr]                    ; (app <FAE> <FAE>) ; ahora podemos aplicar una funcion a otra
   [prim name args]
-  [fun arg body]   
+  [fun arg body]
+  [delay expr]
+  [force expr]
+  
 )
 
 (define primitives
@@ -101,6 +104,8 @@
                                                                  [(list 'with tail body)]
                                                                  )))]
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
+    [(list 'delay (cons h t)) (delay (parse (cons h t)))]
+    [(list 'force (cons h t)) (force (parse (cons h t)))]
     [(list 'rec (list x e) b)(parse `{with {,x {Y {fun {,x} ,e}}} ,b})]
     [(list 'fun arg-names body) (transform-fundef arg-names (parse body))] ; 1. Agregar el caso del fun
     [(list fun args) (match args
@@ -112,16 +117,11 @@
                                              (transform-funapp (parse fun) (reverse (map parse args))))]
                        )
      ]
-
-    
     [(cons prim-name args)(prim prim-name (map parse args))]
+
     ;[(list arg e) (app (parse arg) (parse e))]; 2. Subir de nivel nuestras funciones
     )
   )
-; (parse '{fun {a b} {+ a b}} 2 1)
-
-;(app (app (fun 'a (fun 'b (add (id 'a) (id 'b)))) (num 1)) (num 3))
-;(app (app (fun 'a (fun 'b (add (id 'a) (id 'b)))) (num 1)) (num 3))
 
 
 (deftype Val
@@ -129,8 +129,6 @@
   (closureV arg body env) ; closure = fun + env
   (promiseV expr env cache) ; promise = expr-L + env + cache
   )
-
-
 
 ; interp :: Expr  Env -> Val
 ; interpreta una expresion
@@ -144,6 +142,8 @@
     [(if-tf c et ef) (if (valV-v (interp c env))
                          (interp et env)
                          (interp ef env))]
+    [(delay (prim prim-name args)) (promiseV (prim prim-name args) env (box #f))]
+    [(force expr) (strict (interp expr env))]
     ;[(with x e b) (interp b (extend-env x (interp e env) env))] ; Si asociamos una funcion a una variable, la funcion entra al env
     [(fun arg body) (closureV arg body env)] ; Por ahora, devolvemos la misma expresion que nos llego
     [(app f e)
@@ -154,6 +154,8 @@
                               ;(interp e env) ; eager eval
                               fenv)) ; parece que no funciona ni con estatico ni dinamico
      ]
+    
+    
 ))
 
 
@@ -229,10 +231,11 @@
          [expr (parse prog)]
          [t (typeof expr)]
          [res (interp expr (Y-combinator 'Y (parse '{fun {f} {with {h {fun {g} {fun {n} {{f {g g}} n}}}} {h h}}}) empty-env))])
-    (match (strict res)
+    (match res
       [(valV v) v]
-      [(closureV arg body env) res])
-      ;[(promiseV e env) (interp e env)])
+      [(closureV arg body env) res]
+      [(promiseV e env cache)(promiseV e env cache)]
+      )
     )
   )
 
@@ -340,8 +343,13 @@
 (test (run '{|| #f #t}) #t)
 (test (run '{|| 12 11}) 12)
 (test (run '{with {x 3} 2}) 2)
+;Deberia usar force
 (test (run '{with {x 3} x}) 3)
 (test (run '{with {x 3} {with {y 4} x}}) 3)
+;Usando Force
+(test (run '{force {with {x 3} x}}) 3)
+(test (run '{force {with {x 3} {with {y 4} x}}}) 3)
+
 (test (run '{with {x 3} {+ x 4}}) 7)
 (test (run '{with {x 3} {with {x 10} {+ x x}}}) 20)
 (test (run '{with {x 3} {with {x x} {+ x x}}}) 6)
@@ -397,7 +405,7 @@
 (test (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
 
-#|(test (run '{rec {mult {fun {n}
+(test (run '{rec {mult {fun {n}
                       {if-tf {zero?? n}
                              1
                              {* n {mult {- n 1}}}
@@ -415,4 +423,7 @@
                       }
                  }
             {mult 10}
-            })5)|#
+            })5)
+
+(run '{delay {+ 1 1}})
+(run '{force {delay {+ 1 1}}})
