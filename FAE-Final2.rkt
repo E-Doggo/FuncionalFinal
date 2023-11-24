@@ -95,6 +95,10 @@
     [(? symbol?) (id src)]
     [(list 'if-tf c et ef) (if-tf (parse c) (parse et) (parse ef))]
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
+        [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
+                                                           (cond [(empty? tail) (parse body)]
+                                                                 [(parse (list 'with tail body))]
+                                                                        )))]
     [(list 'fun arg-names body) (transform-fundef arg-names (parse body))] ; 1. Agregar el caso del fun
     [(list fun args) (match args
                        [(? number?) (app (parse fun) (parse args))]
@@ -105,6 +109,8 @@
                                              (transform-funapp (parse fun) (reverse (map parse args))))]
                        )
      ]
+
+    
     [(cons prim-name args)(prim prim-name (map parse args))]
     ;[(list arg e) (app (parse arg) (parse e))]; 2. Subir de nivel nuestras funciones
     )
@@ -315,3 +321,12 @@
 (test (run '{with {addN {fun {n}
                        {fun {x} {+ x n}}}}
             {{addN 10} 20}}) 30)
+
+(run '{with {addN {fun {n}
+                       {fun {x} {+ x n}}}}
+            {{addN 10} 20}})
+
+(run '{with {{x 3} {y 2}} {+ x y}})
+#|(run '{with {{x 3} {x 5}} {+ x x}})
+(run '{with {{x 3} {y {+ x 3}}} {+ x y}})|#
+(run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})
