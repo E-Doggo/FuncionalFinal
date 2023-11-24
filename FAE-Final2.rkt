@@ -14,7 +14,8 @@
 
 (deftype Expr
   [num n]                                 ; <num>
-  [bool b]                                ; <bool>                               ; (- <FAE> <FAE>)
+  [bool b]                                ; <bool>
+  [zero n]
   [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
 ; [with id-name named-expr body-expr]     ; (with <id> <FAE> <FAE>) "syntax sugar"
   [id name]                               ; <id> 
@@ -93,12 +94,14 @@
     [(? number?) (num src)]
     [(? boolean?) (bool src)]
     [(? symbol?) (id src)]
+    [(list 'zero?? n) (zero (parse n))]
     [(list 'if-tf c et ef) (if-tf (parse c) (parse et) (parse ef))]
+    [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
+                                                           (cond [(empty? tail) body]
+                                                                 [(list 'with tail body)]
+                                                                 )))]
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
-        [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
-                                                           (cond [(empty? tail) (parse body)]
-                                                                 [(parse (list 'with tail body))]
-                                                                        )))]
+    [(list 'rec (list x e) b)(parse `{with {,x {Y {fun {,x} ,e}}} ,b})]
     [(list 'fun arg-names body) (transform-fundef arg-names (parse body))] ; 1. Agregar el caso del fun
     [(list fun args) (match args
                        [(? number?) (app (parse fun) (parse args))]
@@ -127,6 +130,8 @@
   (promiseV expr env cache) ; promise = expr-L + env + cache
   )
 
+
+
 ; interp :: Expr  Env -> Val
 ; interpreta una expresion
 (define (interp expr env)
@@ -134,8 +139,9 @@
     [(num n) (valV n)]
     [(bool b) (valV b)]
     [(id x) (env-lookup x env)]; buscar el valor de x en env
+    [(zero n) (zeroV (interp n env))]
     [(prim prim-name args)(prim-ops prim-name (map (λ (x) (strict (interp x env))) args))]
-    [(if-tf c et ef) (if (interp c env)
+    [(if-tf c et ef) (if (valV-v (interp c env))
                          (interp et env)
                          (interp ef env))]
     ;[(with x e b) (interp b (extend-env x (interp e env) env))] ; Si asociamos una funcion a una variable, la funcion entra al env
@@ -150,15 +156,45 @@
      ]
 ))
 
-; (run '{{fun {a b} {+ a b}} 1 3})
 
-; valV+ : Val -> Val
-(define (valV+ s1 s2)
-  (valV (+ (valV-v s1) (valV-v s2)))
+;Necesita del force
+(define (zeroV n)
+  (valV (eq? 0 (valV-v n))))
+
+
+(deftype Type
+  (Num)
+  (Bool))
+
+;all-nums:: (List nums) -> bool
+(define (all-nums lst)
+  (match lst
+  ['() #t]
+  [(cons h t)(if (Num? h) (all-nums t) #f)])
   )
 
-(define (valV- s1 s2)
-  (valV (- (valV-v s1) (valV-v s2)))
+
+;typeof: expr -> type/error
+#|
+(cons '+ +)
+        (cons '- -)
+        (cons '* *)
+        (cons '/ /)
+        (cons '< <)
+        (cons '> >)
+|#
+(define (typeof expr)
+  (match expr
+    [(num n)(Num)]
+    [(bool b)(Bool)]
+    [(app (fun x (prim '* (cons h t))) body) (if (Bool? (typeof body))
+                                                 (error "error: type error")
+                                                 (typeof (prim '* (cons h t)))
+                                                 )]
+    [(prim '* (list x ...)) (let ([l (map typeof x)])
+                              (if (all-nums (cdr l)) (Num) (error "error: type error")))]
+    [else expr]
+    )
   )
 
 ; strict -> Val(valV/closureV/promiseV) -> Val (valV/closureV))
@@ -180,9 +216,28 @@
     )
   )
 
+
+
+(define (Y-combinator arg func enviroment)
+  (extend-env arg (interp func enviroment) enviroment))
+
+
 ; run: Src -> Src
 ; corre un programa
-(define (run prog)
+(define (run prog) 
+  (let* (
+         [expr (parse prog)]
+         [t (typeof expr)]
+         [res (interp expr (Y-combinator 'Y (parse '{fun {f} {with {h {fun {g} {fun {n} {{f {g g}} n}}}} {h h}}}) empty-env))])
+    (match (strict res)
+      [(valV v) v]
+      [(closureV arg body env) res])
+      ;[(promiseV e env) (interp e env)])
+    )
+  )
+
+#|(define (run prog)
+
   (let ([res (interp (parse prog) empty-env)])
     ; (interp res ...)
     (match (strict res)
@@ -190,7 +245,7 @@
       [(closureV arg body env) res])
       ;[(promiseV e env) (interp e env)])
     )
-  )
+  )|#
 
 (test (run '{+ 3 4}) 7)
 (test (run '{- 5 1}) 4)
@@ -295,6 +350,7 @@
 (test (run '{with {x 3} {with {y {+ 2 x}} {+ x y}}}) 8)
 (test (run '{* 1 1 1 1}) 1)
 (test/exn (run '{* 1 #t 1 1}) "type error")
+(test/exn (run '{with {x 1} {* #t x x x}}) "type error")
 (test/exn (run '{with {x #t} {* 1 x x x}}) "type error")
 (test/exn (run '{with {x #t} {* x x x x}}) "type error")
 (test (run '{with {x 3} {+ x x}}) 6)
@@ -327,6 +383,36 @@
             {{addN 10} 20}})
 
 (run '{with {{x 3} {y 2}} {+ x y}})
-#|(run '{with {{x 3} {x 5}} {+ x x}})
-(run '{with {{x 3} {y {+ x 3}}} {+ x y}})|#
+(run '{with {{x 3} {x 5}} {+ x x}})
+(run '{with {{x 3} {y {+ x 3}}} {+ x y}})
 (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})
+(test (run '{with {x 3} {if-tf {+ x 1} {+ x 3} {+ x 9}}}) 6)
+
+(run '{rec {sum {fun {n}
+                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})
+
+(test (run '{rec {sum {fun {n}
+                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})0)
+
+(test (run '{rec {sum {fun {n}
+                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
+
+#|(test (run '{rec {mult {fun {n}
+                      {if-tf {zero?? n}
+                             1
+                             {* n {mult {- n 1}}}
+                             }
+                      }
+                 }
+            {mult 6}
+            })720)
+
+(test (run '{rec {mult {fun {n}
+                      {if-tf {zero?? n}
+                             0
+                             {- n {mult {- n 1}}}
+                             }
+                      }
+                 }
+            {mult 10}
+            })5)|#
