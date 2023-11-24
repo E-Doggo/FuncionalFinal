@@ -99,6 +99,7 @@
                                                                  [(list 'with tail body)]
                                                                  )))]
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
+    [(list 'rec (list x e) b)(parse `{with {,x {Y {fun {,x} ,e}}} ,b})]
     [(list 'fun arg-names body) (transform-fundef arg-names (parse body))] ; 1. Agregar el caso del fun
     [(list fun args) (match args
                        [(? number?) (app (parse fun) (parse args))]
@@ -176,16 +177,22 @@
 
 
 ;typeof: expr -> type/error
+#|
+(cons '+ +)
+        (cons '- -)
+        (cons '* *)
+        (cons '/ /)
+        (cons '< <)
+        (cons '> >)
+|#
 (define (typeof expr)
   (match expr
     [(num n)(Num)]
     [(bool b)(Bool)]
-    ;(app (fun 'x (prim '* (list (id 'x) (id 'x) (id 'x) (id 'x)))) (bool #t))
     [(app (fun x (prim '* (cons h t))) body) (if (Bool? (typeof body))
                                                  (error "error: type error")
                                                  (typeof (prim '* (cons h t)))
                                                  )]
-    ;(prim '* (list (num 1) (bool #t) (num 1) (num 1)))
     [(prim '* (list x ...)) (let ([l (map typeof x)])
                               (if (all-nums (cdr l)) (Num) (error "error: type error")))]
     [else expr]
@@ -213,7 +220,8 @@
 
 
 
-
+(define (Y-combinator arg func enviroment)
+  (extend-env arg (interp func enviroment) enviroment))
 
 
 ; run: Src -> Src
@@ -222,7 +230,7 @@
   (let* (
          [expr (parse prog)]
          [t (typeof expr)]
-         [res (interp expr empty-env)])
+         [res (interp expr (Y-combinator 'Y (parse '{fun {f} {with {h {fun {g} {fun {n} {{f {g g}} n}}}} {h h}}}) empty-env))])
     (match (strict res)
       [(valV v) v]
       [(closureV arg body env) res])
