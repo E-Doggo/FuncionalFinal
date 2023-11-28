@@ -185,6 +185,7 @@
         (cons '< <)
         (cons '> >)
 |#
+
 (define (typeof expr)
   (match expr
     [(num n)(Num)]
@@ -238,17 +239,6 @@
       )
     )
   )
-
-#|(define (run prog)
-
-  (let ([res (interp (parse prog) empty-env)])
-    ; (interp res ...)
-    (match (strict res)
-      [(valV v) v]
-      [(closureV arg body env) res])
-      ;[(promiseV e env) (interp e env)])
-    )
-  )|#
 
 (test (run '{+ 3 4}) 7)
 (test (run '{- 5 1}) 4)
@@ -394,6 +384,15 @@
 (run '{with {{x 3} {x 5}} {+ x x}})
 (run '{with {{x 3} {y {+ x 3}}} {+ x y}})
 (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})
+
+(test (run '{with {{x 2}{y 3}{z 1}} {+ x {+ y z}}})6)
+(test (run '{with {{x 2}{y 3}} {+ x {+ y 4}}})9)
+(test (run '{with {{t 10}{s 20}{u 30}{x 2}{y 3}{z 1}} {+ x {+ y {+ s {+ u 1}}}}})56)
+(test (run '{with {{x 3} {y 2}} {+ x y}}) 5)
+(test (run '{with {{x 3} {x 5}} {+ x x}}) 10)
+(test (run '{with {{x 3} {y {+ x 3}}} {+ x y}}) 9)
+(test (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}}) 15)
+
 (test (run '{with {x 3} {if-tf {+ x 1} {+ x 3} {+ x 9}}}) 6)
 
 (run '{rec {sum {fun {n}
@@ -405,7 +404,7 @@
 (test (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
 
-(test (run '{rec {mult {fun {n}
+#|(test (run '{rec {mult {fun {n}
                       {if-tf {zero?? n}
                              1
                              {* n {mult {- n 1}}}
@@ -423,7 +422,12 @@
                       }
                  }
             {mult 10}
-            })5)
+            })5)|#
 
-(run '{delay {+ 1 1}})
-(run '{force {delay {+ 1 1}}})
+(test (run '{delay {+ 1 1}}) (promiseV
+                              (prim '+ (list (num 1) (num 1)))
+                              (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv))
+                              '#&#f))
+
+(test (run '{force {delay {+ 1 1}}})2)
+
