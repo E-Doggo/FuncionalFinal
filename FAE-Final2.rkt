@@ -15,8 +15,13 @@
 (deftype Expr
   [num n]                                 ; <num>
   [bool b]                                ; <bool>
+  [str s]
   [zero n]
   [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
+  [array expr]
+  [seqn expr-list]
+  [kar lst]
+  [kdr lst]
   [id name]                               ; <id> 
   [app fname arg-expr]                    ; (app <FAE> <FAE>) ; ahora podemos aplicar una funcion a otra
   [prim name args]
@@ -24,6 +29,7 @@
   [delay expr]
   [force expr]
   [lazy fun]
+
 )
 
 ;(test (run '{{fun {x} {+ x x}} 10}) 20)
@@ -98,6 +104,7 @@
     [(? number?) (num src)]
     [(? boolean?) (bool src)]
     [(? symbol?) (id src)]
+    [(? string? s) (str s)]
     [(list 'lazy expr) (lazy (parse expr))]
     [(list 'zero?? n) (zero (parse n))]
     [(list 'if-tf c et ef) (if-tf (parse c) (parse et) (parse ef))]
@@ -106,6 +113,10 @@
                                                                  [(list 'with tail body)]
                                                                  )))]
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
+    [(list 'array expr)(array (map parse expr))]
+    [(list 'car lst)(kar (parse lst))]
+    [(list 'cdr lst)(kdr (parse lst))]
+    [(list 'seqn expr-list) (seqn (map parse expr-list))]
     [(list 'delay (cons h t)) (delay (parse (cons h t)))]
     [(list 'force (cons h t)) (force (parse (cons h t)))]
     [(list 'rec (list x e) b)(parse `{with {,x {Y {fun {,x} ,e}}} ,b})]
@@ -137,12 +148,17 @@
   (match expr
     [(num n) (valV n)]
     [(bool b) (valV b)]
+    [(str s) (valV s)]
     [(id x) (env-lookup x env)]; buscar el valor de x en env
     [(zero n) (zeroV (interp n env))]
     [(prim prim-name args)(prim-ops prim-name (map (λ (x) (strict (interp x env))) args))]
     [(if-tf c et ef) (if (valV-v (interp c env))
                          (interp et env)
                          (interp ef env))]
+    [(seqn expr-list) (interpSeveral expr-list env)]
+    [(array expr) (map (λ (x) (interp x env)) expr)]
+    [(kar lst)(car (interp lst env))]
+    [(kdr lst)(cdr (interp lst env))]
     [(delay (prim prim-name args)) (promiseV (prim prim-name args) env (box #f))]
     [(force (delay expr)) (strict (interp expr env))]
     [(lazy fun) (interp (cons fun #t) env)]
@@ -162,8 +178,15 @@
     
 ))
 
+(define (interpSeveral expr-list env)
+  (cond
+    [(empty? expr-list) (error "Empty sequence")]
+    [(= 1 (length expr-list)) (interp (first expr-list) env)]
+    [else (interpSeveral (rest expr-list) env)]
+  )
+)
 
-;Necesita del force
+
 (define (zeroV n)
   (valV (eq? 0 (valV-v n))))
 
@@ -230,6 +253,7 @@
          [res (interp expr (Y-combinator 'Y (parse '{fun {f} {with {h {fun {g} {fun {n} {{f {g g}} n}}}} {h h}}}) empty-env))])
     (match res
       [(valV v) (strict v)]
+      [(list expr ...) (map (λ (v) (valV-v v)) res)]
       [(closureV arg body env) (strict res)]
       [(promiseV e env cache)(promiseV e env cache)]
       )
@@ -404,8 +428,21 @@
 (test (run '{lazy {with {x 3} x}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
 (test (run '{lazy {with {x 3} {with {y 4} x}}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
 
-#|(run '{lazy {with {y 3} {with {addN {fun {n}
-                       {fun {x} {+ x n}}}}
-            {{addN 10} y}}}})|#
-
 (test (run '{with {x 3} {lazy {with {y {+ x x}} y}}}) (promiseV (prim '+ (list (id 'x) (id 'x))) (aEnv 'x (valV 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv))) '#&#f))
+(run '{seqn
+       {
+        {+ 1 1}
+        {+ 2 2}
+        }
+       })
+
+(test(run "hola")"hola")
+
+(run '{array {1 2 3 4}})
+
+;arreglar para que kar funcione primero
+(run '{car {array {1 2 3 4}}})
+(run '{cdr {array {1 2 3 4}}})
+
+(test (run '{+ 3 4}) 7)
+(test (run '{- 5 1}) 4)
