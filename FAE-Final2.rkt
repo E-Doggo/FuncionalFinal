@@ -1,5 +1,5 @@
 #lang play
-(print-only-errors #f) ; Para ver solo los errores.
+;(print-only-errors #f) ; Para ver solo los errores.
 
 #|
 <FAE-L> ::=   <num> | <bool> | <id>
@@ -15,18 +15,19 @@
 (deftype Expr
   [num n]                                 ; <num>
   [bool b]                                ; <bool>
+  [str s]
   [zero n]
   [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
+  [array expr]
+; [with id-name named-expr body-expr]     ; (with <id> <FAE> <FAE>) "syntax sugar"
   [id name]                               ; <id> 
   [app fname arg-expr]                    ; (app <FAE> <FAE>) ; ahora podemos aplicar una funcion a otra
   [prim name args]
   [fun arg body]
   [delay expr]
   [force expr]
-  [lazy fun]
+  [seqn expr-list]
 )
-
-;(test (run '{{fun {x} {+ x x}} 10}) 20)
 
 (define primitives
   (list (cons '+ +)
@@ -41,6 +42,8 @@
         (cons '>= >=)
         (cons '&&  (λ (h t) (and  h t)))
         (cons '|| (λ (h t) (or  h t)))
+        (cons 'kar (λ (h t) (car h t)))
+        (cons 'qdr (λ (h t) (cdr h t)))
         )
   )
 
@@ -98,7 +101,8 @@
     [(? number?) (num src)]
     [(? boolean?) (bool src)]
     [(? symbol?) (id src)]
-    [(list 'lazy expr) (lazy (parse expr))]
+    [(? string? s) (str s)]
+    [(list 'array expr)(array (map parse expr))]
     [(list 'zero?? n) (zero (parse n))]
     [(list 'if-tf c et ef) (if-tf (parse c) (parse et) (parse ef))]
     [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
@@ -108,6 +112,7 @@
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
     [(list 'delay (cons h t)) (delay (parse (cons h t)))]
     [(list 'force (cons h t)) (force (parse (cons h t)))]
+    [(list 'seqn expr-list) (seqn (map parse expr-list))]
     [(list 'rec (list x e) b)(parse `{with {,x {Y {fun {,x} ,e}}} ,b})]
     [(list 'fun arg-names body) (transform-fundef arg-names (parse body))] ; 1. Agregar el caso del fun
     [(list fun args) (match args
@@ -120,6 +125,7 @@
                        )
      ]
     [(cons prim-name args)(prim prim-name (map parse args))]
+ 
     [(list arg e) (app (parse arg) (parse e))]; 2. Subir de nivel nuestras funciones
     )
   )
@@ -137,30 +143,38 @@
   (match expr
     [(num n) (valV n)]
     [(bool b) (valV b)]
+    [(str s) (valV s)]
     [(id x) (env-lookup x env)]; buscar el valor de x en env
     [(zero n) (zeroV (interp n env))]
+    [(array expr) (map (λ (x) (interp x env)) expr)]
     [(prim prim-name args)(prim-ops prim-name (map (λ (x) (strict (interp x env))) args))]
     [(if-tf c et ef) (if (valV-v (interp c env))
                          (interp et env)
                          (interp ef env))]
     [(delay (prim prim-name args)) (promiseV (prim prim-name args) env (box #f))]
-    [(force (delay expr)) (strict (interp expr env))]
-    [(lazy fun) (interp (cons fun #t) env)]
-    [(fun arg body) (closureV arg body env)]
+    [(force expr) (strict (interp expr env))]
+    ;[(with x e b) (interp b (extend-env x (interp e env) env))] ; Si asociamos una funcion a una variable, la funcion entra al env
+    [(fun arg body) (closureV arg body env)] ; Por ahora, devolvemos la misma expresion que nos llego
+    [(seqn expr-list) (interpSeveral expr-list env)]
     [(app f e)
-     (def (closureV arg body fenv) (strict (interp f env)))
-     (interp body (extend-env arg
-                              (interp e env)
-                              fenv))
-     ]
-    [(cons (app f e) bool)
-     (def (closureV arg body fenv) (interp f env))
-     (interp body (extend-env arg
-                               (promiseV e env (box #f)) 
-                              fenv))]
+     (def (closureV arg body fenv) (strict (interp f env))) ; Esto permite encontrar (fun 'x (add (id 'x) (id 'x))) por ejemplo y tomar arg y body
     
+     (interp body (extend-env arg
+                              (promiseV e env (box #f)) ; lazy eval
+                              ;(interp e env) ; eager eval
+                              fenv)) ; parece que no funciona ni con estatico ni dinamico
+     ]
     
 ))
+
+(define (interpSeveral expr-list env)
+  (cond
+    [(empty? expr-list) (error "Empty sequence")]
+    [(= 1 (length expr-list)) (interp (first expr-list) env)]
+    [else (interpSeveral (rest expr-list) env)]
+  )
+)
+
 
 
 ;Necesita del force
@@ -170,7 +184,8 @@
 
 (deftype Type
   (Num)
-  (Bool))
+  (Bool)
+  (String))
 
 ;all-nums:: (List nums) -> bool
 (define (all-nums lst)
@@ -181,11 +196,20 @@
 
 
 ;typeof: expr -> type/error
+#|
+(cons '+ +)
+        (cons '- -)
+        (cons '* *)
+        (cons '/ /)
+        (cons '< <)
+        (cons '> >)
+|#
 
 (define (typeof expr)
   (match expr
     [(num n)(Num)]
     [(bool b)(Bool)]
+     [(str s) (String)]
     [(app (fun x (prim '* (cons h t))) body) (if (Bool? (typeof body))
                                                  (error "error: type error")
                                                  (typeof (prim '* (cons h t)))
@@ -229,8 +253,9 @@
          [t (typeof expr)]
          [res (interp expr (Y-combinator 'Y (parse '{fun {f} {with {h {fun {g} {fun {n} {{f {g g}} n}}}} {h h}}}) empty-env))])
     (match res
-      [(valV v) (strict v)]
-      [(closureV arg body env) (strict res)]
+      [(valV v) v]
+      [(closureV arg body env) res]
+      [(list expr ...) (map (λ (v) (valV-v v)) res)]
       [(promiseV e env cache)(promiseV e env cache)]
       )
     )
@@ -285,6 +310,8 @@
                        {fun {x} {+ x n}}}}
             {{addN 10} 20}}) 30)
 
+; Tests para laziness
+(test (run '{with {x y} 1}) 1)
 
 ; Tests para comprombar eval strict
 (test (run '{with {x 3} {with {y x} y}}) 3)
@@ -327,8 +354,13 @@
 (test (run '{|| #f #t}) #t)
 (test (run '{|| 12 11}) 12)
 (test (run '{with {x 3} 2}) 2)
+;Deberia usar force
 (test (run '{with {x 3} x}) 3)
 (test (run '{with {x 3} {with {y 4} x}}) 3)
+;Usando Force
+(test (run '{force {with {x 3} x}}) 3)
+(test (run '{force {with {x 3} {with {y 4} x}}}) 3)
+
 (test (run '{with {x 3} {+ x 4}}) 7)
 (test (run '{with {x 3} {with {x 10} {+ x x}}}) 20)
 (test (run '{with {x 3} {with {x x} {+ x x}}}) 6)
@@ -357,7 +389,7 @@
 (test (run '{with {add1 {fun {x} {+ x 1}}}
                   {with {foo {fun {f} {+ {f 10} {f 10}}}}
                         {foo add1}}}) 22)
-(test (run '{{fun {x} {+ x 1}} {+ 2 3}}) 6)
+(test (run '{{fun {x}{+ x 1}} {+ 2 3}}) 6)
 (test (run '{with {apply10 {fun {f} {f 10}}}
                   {with {add1 {fun {x} {+ x 1}}}
                         {apply10 add1}}}) 11)
@@ -369,11 +401,11 @@
                        {fun {x} {+ x n}}}}
             {{addN 10} 20}})
 
-;Implementacion withN usando azucar sintactico
 (run '{with {{x 3} {y 2}} {+ x y}})
 (run '{with {{x 3} {x 5}} {+ x x}})
 (run '{with {{x 3} {y {+ x 3}}} {+ x y}})
 (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})
+
 (test (run '{with {{x 2}{y 3}{z 1}} {+ x {+ y z}}})6)
 (test (run '{with {{x 2}{y 3}} {+ x {+ y 4}}})9)
 (test (run '{with {{t 10}{s 20}{u 30}{x 2}{y 3}{z 1}} {+ x {+ y {+ s {+ u 1}}}}})56)
@@ -382,7 +414,8 @@
 (test (run '{with {{x 3} {y {+ x 3}}} {+ x y}}) 9)
 (test (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}}) 15)
 
-;Implementacion de recursividad con el combinador Y
+(test (run '{with {x 3} {if-tf {+ x 1} {+ x 3} {+ x 9}}}) 6)
+
 (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})
 
@@ -392,7 +425,26 @@
 (test (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
 
-;Delay and Force Implementations
+#|(test (run '{rec {mult {fun {n}
+                      {if-tf {zero?? n}
+                             1
+                             {* n {mult {- n 1}}}
+                             }
+                      }
+                 }
+            {mult 6}
+            })720)
+
+(test (run '{rec {mult {fun {n}
+                      {if-tf {zero?? n}
+                             0
+                             {- n {mult {- n 1}}}
+                             }
+                      }
+                 }
+            {mult 10}
+            })5)|#
+
 (test (run '{delay {+ 1 1}}) (promiseV
                               (prim '+ (list (num 1) (num 1)))
                               (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv))
@@ -400,12 +452,19 @@
 
 (test (run '{force {delay {+ 1 1}}})2)
 
-;Lazy implementation
-(test (run '{lazy {with {x 3} x}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
-(test (run '{lazy {with {x 3} {with {y 4} x}}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
+(run '{seqn
+       {
+        {+ 1 1}
+        {+ 2 2}
+        }
+       })
 
-#|(run '{lazy {with {y 3} {with {addN {fun {n}
-                       {fun {x} {+ x n}}}}
-            {{addN 10} y}}}})|#
+(test(run "hola")"hola")
 
-(test (run '{with {x 3} {lazy {with {y {+ x x}} y}}}) (promiseV (prim '+ (list (id 'x) (id 'x))) (aEnv 'x (valV 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv))) '#&#f))
+(run '{array {1 2 3 4}})
+
+;arreglar para que kar funcione primero
+(run '{qdr {array {1 2 3 4}}})
+
+(test (run '{+ 3 4}) 7)
+(test (run '{- 5 1}) 4)
