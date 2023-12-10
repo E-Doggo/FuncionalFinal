@@ -17,15 +17,16 @@
   [bool b]                                ; <bool>
   [zero n]
   [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
-; [with id-name named-expr body-expr]     ; (with <id> <FAE> <FAE>) "syntax sugar"
   [id name]                               ; <id> 
   [app fname arg-expr]                    ; (app <FAE> <FAE>) ; ahora podemos aplicar una funcion a otra
   [prim name args]
   [fun arg body]
   [delay expr]
   [force expr]
-  
+  [lazy fun]
 )
+
+;(test (run '{{fun {x} {+ x x}} 10}) 20)
 
 (define primitives
   (list (cons '+ +)
@@ -97,6 +98,7 @@
     [(? number?) (num src)]
     [(? boolean?) (bool src)]
     [(? symbol?) (id src)]
+    [(list 'lazy expr) (lazy (parse expr))]
     [(list 'zero?? n) (zero (parse n))]
     [(list 'if-tf c et ef) (if-tf (parse c) (parse et) (parse ef))]
     [(list 'with (cons (list x e) tail) body) (parse (list 'with (list x e)
@@ -118,8 +120,7 @@
                        )
      ]
     [(cons prim-name args)(prim prim-name (map parse args))]
-
-    ;[(list arg e) (app (parse arg) (parse e))]; 2. Subir de nivel nuestras funciones
+    [(list arg e) (app (parse arg) (parse e))]; 2. Subir de nivel nuestras funciones
     )
   )
 
@@ -143,17 +144,20 @@
                          (interp et env)
                          (interp ef env))]
     [(delay (prim prim-name args)) (promiseV (prim prim-name args) env (box #f))]
-    [(force expr) (strict (interp expr env))]
-    ;[(with x e b) (interp b (extend-env x (interp e env) env))] ; Si asociamos una funcion a una variable, la funcion entra al env
-    [(fun arg body) (closureV arg body env)] ; Por ahora, devolvemos la misma expresion que nos llego
+    [(force (delay expr)) (strict (interp expr env))]
+    [(lazy fun) (interp (cons fun #t) env)]
+    [(fun arg body) (closureV arg body env)]
     [(app f e)
-     (def (closureV arg body fenv) (strict (interp f env))) ; Esto permite encontrar (fun 'x (add (id 'x) (id 'x))) por ejemplo y tomar arg y body
-    
+     (def (closureV arg body fenv) (strict (interp f env)))
      (interp body (extend-env arg
-                              (promiseV e env (box #f)) ; lazy eval
-                              ;(interp e env) ; eager eval
-                              fenv)) ; parece que no funciona ni con estatico ni dinamico
+                              (interp e env)
+                              fenv))
      ]
+    [(cons (app f e) bool)
+     (def (closureV arg body fenv) (interp f env))
+     (interp body (extend-env arg
+                               (promiseV e env (box #f)) 
+                              fenv))]
     
     
 ))
@@ -177,14 +181,6 @@
 
 
 ;typeof: expr -> type/error
-#|
-(cons '+ +)
-        (cons '- -)
-        (cons '* *)
-        (cons '/ /)
-        (cons '< <)
-        (cons '> >)
-|#
 
 (define (typeof expr)
   (match expr
@@ -233,8 +229,8 @@
          [t (typeof expr)]
          [res (interp expr (Y-combinator 'Y (parse '{fun {f} {with {h {fun {g} {fun {n} {{f {g g}} n}}}} {h h}}}) empty-env))])
     (match res
-      [(valV v) v]
-      [(closureV arg body env) res]
+      [(valV v) (strict v)]
+      [(closureV arg body env) (strict res)]
       [(promiseV e env cache)(promiseV e env cache)]
       )
     )
@@ -289,8 +285,6 @@
                        {fun {x} {+ x n}}}}
             {{addN 10} 20}}) 30)
 
-; Tests para laziness
-(test (run '{with {x y} 1}) 1)
 
 ; Tests para comprombar eval strict
 (test (run '{with {x 3} {with {y x} y}}) 3)
@@ -333,13 +327,8 @@
 (test (run '{|| #f #t}) #t)
 (test (run '{|| 12 11}) 12)
 (test (run '{with {x 3} 2}) 2)
-;Deberia usar force
 (test (run '{with {x 3} x}) 3)
 (test (run '{with {x 3} {with {y 4} x}}) 3)
-;Usando Force
-(test (run '{force {with {x 3} x}}) 3)
-(test (run '{force {with {x 3} {with {y 4} x}}}) 3)
-
 (test (run '{with {x 3} {+ x 4}}) 7)
 (test (run '{with {x 3} {with {x 10} {+ x x}}}) 20)
 (test (run '{with {x 3} {with {x x} {+ x x}}}) 6)
@@ -368,7 +357,7 @@
 (test (run '{with {add1 {fun {x} {+ x 1}}}
                   {with {foo {fun {f} {+ {f 10} {f 10}}}}
                         {foo add1}}}) 22)
-(test (run '{{fun {x}{+ x 1}} {+ 2 3}}) 6)
+(test (run '{{fun {x} {+ x 1}} {+ 2 3}}) 6)
 (test (run '{with {apply10 {fun {f} {f 10}}}
                   {with {add1 {fun {x} {+ x 1}}}
                         {apply10 add1}}}) 11)
@@ -380,11 +369,11 @@
                        {fun {x} {+ x n}}}}
             {{addN 10} 20}})
 
+;Implementacion withN usando azucar sintactico
 (run '{with {{x 3} {y 2}} {+ x y}})
 (run '{with {{x 3} {x 5}} {+ x x}})
 (run '{with {{x 3} {y {+ x 3}}} {+ x y}})
 (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})
-
 (test (run '{with {{x 2}{y 3}{z 1}} {+ x {+ y z}}})6)
 (test (run '{with {{x 2}{y 3}} {+ x {+ y 4}}})9)
 (test (run '{with {{t 10}{s 20}{u 30}{x 2}{y 3}{z 1}} {+ x {+ y {+ s {+ u 1}}}}})56)
@@ -393,8 +382,7 @@
 (test (run '{with {{x 3} {y {+ x 3}}} {+ x y}}) 9)
 (test (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}}) 15)
 
-(test (run '{with {x 3} {if-tf {+ x 1} {+ x 3} {+ x 9}}}) 6)
-
+;Implementacion de recursividad con el combinador Y
 (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})
 
@@ -404,26 +392,7 @@
 (test (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
 
-#|(test (run '{rec {mult {fun {n}
-                      {if-tf {zero?? n}
-                             1
-                             {* n {mult {- n 1}}}
-                             }
-                      }
-                 }
-            {mult 6}
-            })720)
-
-(test (run '{rec {mult {fun {n}
-                      {if-tf {zero?? n}
-                             0
-                             {- n {mult {- n 1}}}
-                             }
-                      }
-                 }
-            {mult 10}
-            })5)|#
-
+;Delay and Force Implementations
 (test (run '{delay {+ 1 1}}) (promiseV
                               (prim '+ (list (num 1) (num 1)))
                               (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv))
@@ -431,3 +400,12 @@
 
 (test (run '{force {delay {+ 1 1}}})2)
 
+;Lazy implementation
+(test (run '{lazy {with {x 3} x}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
+(test (run '{lazy {with {x 3} {with {y 4} x}}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
+
+#|(run '{lazy {with {y 3} {with {addN {fun {n}
+                       {fun {x} {+ x n}}}}
+            {{addN 10} y}}}})|#
+
+(test (run '{with {x 3} {lazy {with {y {+ x x}} y}}}) (promiseV (prim '+ (list (id 'x) (id 'x))) (aEnv 'x (valV 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv))) '#&#f))
