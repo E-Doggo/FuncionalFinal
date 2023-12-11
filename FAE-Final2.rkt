@@ -2,18 +2,18 @@
 (print-only-errors #t) ; Para ver solo los errores.
 
 #|
-<FAE-L> ::=   <num> | <bool> | <id> | <str> | <zero> 
-            | (if-tf <FAE> <FAE> <FAE>)
-            | (array <FAE>)
-            | (seqn (list <FAE>))
-            | (kar <FAE>)
-            | (kdr <FAE>)
-            | (app <FAE> <FAE>) ; puedo aplicar una funcion a otra funcion / puedo usar una funcion como argumento.
-            | (prim <symbol> <FAE>)
-            | (fun <id> <FAE>) ; fun(que es una lambda) nombre-arg body
-            | (delay <FAE>)
-            | (force <FAE>)
-            | (lazy <FAE>)
+<FAE-RC-L> ::=   <num> | <bool> | <id> | <str> | <zero> 
+            | (if-tf <FAE-RC> <FAE-RC> <FAE-RC>)
+            | (array <FAE-RC>)
+            | (seqn (list <FAE-RC>))
+            | (kar <FAE-RC>)
+            | (kdr <FAE-RC>)
+            | (app <FAE-RC> <FAE-RC>) ; puedo aplicar una funcion a otra funcion / puedo usar una funcion como argumento.
+            | (prim <symbol> <FAE-RC>)
+            | (fun <id> <FAE-RC>) ; fun(que es una lambda) nombre-arg body
+            | (delay <FAE-RC>)
+            | (force <FAE-RC>)
+            | (lazy <FAE-RC>)
 
 
 |#
@@ -25,20 +25,21 @@
   [str s]                                 ; <str>
   [id name]                               ; <id> 
   [zero n]                                ; <zero>
-  [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
-  [array expr]                            ; (array <FAE>)
-  [seqn expr-list]                        ; (seqn (list <FAE>))
-  [kar lst]                               ; (kar <FAE>)
-  [kdr lst]                               ; (kdr <FAE>)
-  [app fname arg-expr]                    ; (app <FAE> <FAE>)
-  [prim name args]                        ; (prim <symbol> <FAE>)
-  [fun arg body]                          ; (fun <id> <FAE>)
-  [delay expr]                            ; (delay <FAE>)
-  [force expr]                            ; (force <FAE>)
-  [lazy fun]                              ; (lazy <FAE>)
-  [str-ref str pos]
+  [if-tf c et ef]                         ; (if-tf <FAE-RC> <FAE-RC> <FAE-RC>)
+  [array expr]                            ; (array <FAE-RC>)
+  [seqn expr-list]                        ; (seqn (list <FAE-RC>))
+  [kar lst]                               ; (kar <FAE-RC>)
+  [kdr lst]                               ; (kdr <FAE-RC>)
+  [app fname arg-expr]                    ; (app <FAE-RC> <FAE-RC>)
+  [prim name args]                        ; (prim <symbol> <FAE-RC>)
+  [fun arg body]                          ; (fun <id> <FAE-RC>)
+  [delay expr]                            ; (delay <FAE-RC>)
+  [force expr]                            ; (force <FAE-RC>)
+  [lazy fun]                              ; (lazy <FAE-RC>)
+  [str-ref str pos]                       ; (str-ref <FAE-RC> <FAE-RC>)
 )
 
+;primitives :: list (cons name operation)
 (define primitives
   (list (cons '+ +)
         (cons '- -)
@@ -57,7 +58,7 @@
         )
   )
 
-;prim-ops: name args -> val
+;prim-ops :: name args -> val
 (define (prim-ops name args)
   (let ([vals (map (λ (x) (valV-v x)) args)])
     (valV (apply (cdr (assq name primitives)) vals ))
@@ -144,8 +145,8 @@
 
 #|
 <Val> ::= (valV v)
-          | (closureV <arg> <FAE> <env>)
-          | (promiseV <FAE> <env> <cache>)
+          | (closureV <arg> <FAE-RC-RC> <env>)
+          | (promiseV <FAE-RC-RC> <env> <cache>)
 |#
 (deftype Val
   (valV v) ; numero, booleano, string, byte, etc.
