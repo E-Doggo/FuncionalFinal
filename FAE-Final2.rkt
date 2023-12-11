@@ -1,5 +1,5 @@
 #lang play
-(print-only-errors #f) ; Para ver solo los errores.
+(print-only-errors #t) ; Para ver solo los errores.
 
 #|
 <FAE-L> ::=   <num> | <bool> | <id> | <str> | <zero> 
@@ -292,7 +292,6 @@
 ;(test/exn (run '{f 10}) "undefined function") - el error partia de fundef-lookup
 (test/exn (run '{f 10}) "undefined")
 
-;(test (run '{f 10} (list '{define {f x} {+ x x}})) 20)
 ; 1. Asociar la funcion a un identificador
 (test (run '{with {f {fun {x} {+ x x}}}{f 10}}) 20)
 ; 2. Usar la funcion directamente, como un lambda
@@ -439,13 +438,13 @@
 
 ;Implementacion de recursividad con el combinador Y
 (test (run '{rec {sum {fun {n}
-                        {if-tf {zero?? 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})0)
+                        {if-tf {zero?? n} 0 {+ n {sum {- n 1}}}}}} {sum 0}})0)
 
 (test (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})0)
 
 (test (run '{rec {sum {fun {n}
-                        {if-tf {zero?? 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
+                        {if-tf {zero?? n} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
 
 ;Delay and Force Implementations
 (test (run '{delay {+ 1 1}}) (promiseV
