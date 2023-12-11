@@ -2,37 +2,42 @@
 (print-only-errors #f) ; Para ver solo los errores.
 
 #|
-<FAE-L> ::=   <num> | <bool> | <id>
-            | (+ <FAE> <FAE>)
-            | (- <FAE> <FAE>)
+<FAE-L> ::=   <num> | <bool> | <id> | <str> | <zero> 
             | (if-tf <FAE> <FAE> <FAE>)
-            | (with <id> <FAE> <FAE>)
-            | (app <FAE> <FAE>) ; puedo aplicar una funcion a otra funcion / puedo usar una funcion como argumento. 
+            | (array <FAE>)
+            | (seqn (list <FAE>))
+            | (kar <FAE>)
+            | (kdr <FAE>)
+            | (app <FAE> <FAE>) ; puedo aplicar una funcion a otra funcion / puedo usar una funcion como argumento.
+            | (prim <symbol> <FAE>)
             | (fun <id> <FAE>) ; fun(que es una lambda) nombre-arg body
+            | (delay <FAE>)
+            | (force <FAE>)
+            | (lazy <FAE>)
+
+
 |#
 
 
 (deftype Expr
   [num n]                                 ; <num>
   [bool b]                                ; <bool>
-  [str s]
-  [zero n]
-  [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
-  [array expr]
-  [seqn expr-list]
-  [kar lst]
-  [kdr lst]
+  [str s]                                 ; <str>
   [id name]                               ; <id> 
-  [app fname arg-expr]                    ; (app <FAE> <FAE>) ; ahora podemos aplicar una funcion a otra
-  [prim name args]
-  [fun arg body]
-  [delay expr]
-  [force expr]
-  [lazy fun]
-
+  [zero n]                                ; <zero>
+  [if-tf c et ef]                         ; (if-tf <FAE> <FAE> <FAE>)
+  [array expr]                            ; (array <FAE>)
+  [seqn expr-list]                        ; (seqn (list <FAE>))
+  [kar lst]                               ; (kar <FAE>)
+  [kdr lst]                               ; (kdr <FAE>)
+  [app fname arg-expr]                    ; (app <FAE> <FAE>)
+  [prim name args]                        ; (prim <symbol> <FAE>)
+  [fun arg body]                          ; (fun <id> <FAE>)
+  [delay expr]                            ; (delay <FAE>)
+  [force expr]                            ; (force <FAE>)
+  [lazy fun]                              ; (lazy <FAE>)
+  [str-ref str pos]
 )
-
-;(test (run '{{fun {x} {+ x x}} 10}) 20)
 
 (define primitives
   (list (cons '+ +)
@@ -47,6 +52,8 @@
         (cons '>= >=)
         (cons '&&  (λ (h t) (and  h t)))
         (cons '|| (λ (h t) (or  h t)))
+        (cons 'str-append string-append)
+        (cons 'str=? string=?)
         )
   )
 
@@ -71,6 +78,7 @@
 
 ; extend-env:: <id> <val> <env> -> <env>
 (define extend-env aEnv)
+
 ; env-lookup :: <id> <env> -> <val>
 ; buscar el valor de una variable dentro del ambiete
 (define (env-lookup x env)
@@ -87,8 +95,6 @@
       (fun (first arg-names) body)
       (fun (first arg-names) (transform-fundef (cdr arg-names) body)))
   )
-; (transform-fundef '{a b} (add (id 'a) (id 'b)))
-
 
 ; transform-funapp
 (define (transform-funapp fun args)
@@ -97,7 +103,7 @@
       (app (transform-funapp fun (cdr args)) (car args)))
   )
 
-; parse: Src -> Expr
+; parse :: Src -> Expr
 ; parsea codigo fuente
 (define (parse src)
   (match src
@@ -113,10 +119,11 @@
                                                                  [(list 'with tail body)]
                                                                  )))]
     [(list 'with (list x e) b) (app (fun x (parse b)) (parse e))]
-    [(list 'array expr)(array (map parse expr))]
+    [(list 'list expr)(array (map parse expr))]
     [(list 'car lst)(kar (parse lst))]
     [(list 'cdr lst)(kdr (parse lst))]
     [(list 'seqn expr-list) (seqn (map parse expr-list))]
+    [(list 'str-ref str pos) (str-ref (parse str) (parse pos))]
     [(list 'delay (cons h t)) (delay (parse (cons h t)))]
     [(list 'force (cons h t)) (force (parse (cons h t)))]
     [(list 'rec (list x e) b)(parse `{with {,x {Y {fun {,x} ,e}}} ,b})]
@@ -135,7 +142,11 @@
     )
   )
 
-
+#|
+<Val> ::= (valV v)
+          | (closureV <arg> <FAE> <env>)
+          | (promiseV <FAE> <env> <cache>)
+|#
 (deftype Val
   (valV v) ; numero, booleano, string, byte, etc.
   (closureV arg body env) ; closure = fun + env
@@ -155,7 +166,8 @@
     [(if-tf c et ef) (if (valV-v (interp c env))
                          (interp et env)
                          (interp ef env))]
-    [(seqn expr-list) (interpSeveral expr-list env)]
+    [(seqn expr-list)(interpSeveral expr-list env)]
+    [(str-ref str pos) (valV (string-ref (valV-v (interp str env)) (valV-v (interp pos env))))]
     [(array expr) (map (λ (x) (interp x env)) expr)]
     [(kar lst)(car (interp lst env))]
     [(kdr lst)(cdr (interp lst env))]
@@ -178,6 +190,7 @@
     
 ))
 
+; interpSeveral :: list -> (interp expr env)
 (define (interpSeveral expr-list env)
   (cond
     [(empty? expr-list) (error "Empty sequence")]
@@ -186,16 +199,18 @@
   )
 )
 
-
+;zeroV :: num -> bool
 (define (zeroV n)
   (valV (eq? 0 (valV-v n))))
 
-
+#|
+<Type> ::= (Num)|(Bool)
+|#
 (deftype Type
   (Num)
   (Bool))
 
-;all-nums:: (List nums) -> bool
+;all-nums :: (List nums) -> bool
 (define (all-nums lst)
   (match lst
   ['() #t]
@@ -203,8 +218,7 @@
   )
 
 
-;typeof: expr -> type/error
-
+;typeof :: expr -> type/error
 (define (typeof expr)
   (match expr
     [(num n)(Num)]
@@ -219,8 +233,7 @@
     )
   )
 
-; strict -> Val(valV/closureV/promiseV) -> Val (valV/closureV))
-; destructor de promesas - cumplidor de promesas
+; strict :: Val(valV/closureV/promiseV) -> Val (valV/closureV))
 (define (strict val)
   (match val
     [(promiseV e env cache)
@@ -239,7 +252,7 @@
   )
 
 
-
+;Y-combinator :: (arg/fun/env) -> extend-env 
 (define (Y-combinator arg func enviroment)
   (extend-env arg (interp func enviroment) enviroment))
 
@@ -389,15 +402,33 @@
                        {fun {x} {+ x n}}}}
             {{addN 10} 20}}) 30)
 
-(run '{with {addN {fun {n}
-                       {fun {x} {+ x n}}}}
-            {{addN 10} 20}})
+
+;Test ejercicio 1
+(test (run '{seqn
+       {
+        {+ 1 1}
+        {+ 2 2}
+        }
+       }) 4)
+
+(test(run "hola")"hola")
+
+(test (run '{str-append "hola" "adios"}) "holaadios")
+
+(test (run '{str=? "Apple" "Apple"}) #t)
+(test (run '{str=? "Apple" "pple"}) #f)
+
+(test (run '{str-ref "hola" 1}) #\o)
+(test (run '{list {1 2 3 4}}) '(1 2 3 4))
+(test (run '{car {list {1 2 3 4}}}) 1)
+(test (run '{cdr {list {1 2 3 4}}}) '(2 3 4))
+(test (run '{car {cdr {list {1 2 3 4}}}}) 2)
 
 ;Implementacion withN usando azucar sintactico
-(run '{with {{x 3} {y 2}} {+ x y}})
-(run '{with {{x 3} {x 5}} {+ x x}})
-(run '{with {{x 3} {y {+ x 3}}} {+ x y}})
-(run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})
+(test (run '{with {{x 3} {y 2}} {+ x y}})5)
+(test (run '{with {{x 3} {x 5}} {+ x x}})10)
+(test (run '{with {{x 3} {y {+ x 3}}} {+ x y}})9)
+(test (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}})15)
 (test (run '{with {{x 2}{y 3}{z 1}} {+ x {+ y z}}})6)
 (test (run '{with {{x 2}{y 3}} {+ x {+ y 4}}})9)
 (test (run '{with {{t 10}{s 20}{u 30}{x 2}{y 3}{z 1}} {+ x {+ y {+ s {+ u 1}}}}})56)
@@ -407,14 +438,14 @@
 (test (run '{with {{x 10} {y 2} {z 3}} {+ x {+ y z}}}) 15)
 
 ;Implementacion de recursividad con el combinador Y
-(run '{rec {sum {fun {n}
-                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})
+(test (run '{rec {sum {fun {n}
+                        {if-tf {zero?? 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})0)
 
 (test (run '{rec {sum {fun {n}
                         {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 0}})0)
 
 (test (run '{rec {sum {fun {n}
-                        {if-tf {== n 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
+                        {if-tf {zero?? 0} 0 {+ n {sum {- n 1}}}}}} {sum 3}})6)
 
 ;Delay and Force Implementations
 (test (run '{delay {+ 1 1}}) (promiseV
@@ -427,22 +458,4 @@
 ;Lazy implementation
 (test (run '{lazy {with {x 3} x}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
 (test (run '{lazy {with {x 3} {with {y 4} x}}}) (promiseV (num 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv)) '#&#f))
-
 (test (run '{with {x 3} {lazy {with {y {+ x x}} y}}}) (promiseV (prim '+ (list (id 'x) (id 'x))) (aEnv 'x (valV 3) (aEnv 'Y (closureV 'f (app (fun 'h (app (id 'h) (id 'h))) (fun 'g (fun 'n (app (app (id 'f) (app (id 'g) (id 'g))) (id 'n))))) (mtEnv)) (mtEnv))) '#&#f))
-(run '{seqn
-       {
-        {+ 1 1}
-        {+ 2 2}
-        }
-       })
-
-(test(run "hola")"hola")
-
-(run '{array {1 2 3 4}})
-
-;arreglar para que kar funcione primero
-(run '{car {array {1 2 3 4}}})
-(run '{cdr {array {1 2 3 4}}})
-
-(test (run '{+ 3 4}) 7)
-(test (run '{- 5 1}) 4)
